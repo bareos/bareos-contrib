@@ -17,7 +17,7 @@ bconsole()
   printf "%s\n%s\n%s\n" "gui on" "@out $temp" "$cmd" | $BCONSOLE > /dev/null
   # The send command is also written to the output. Remove it.
   # Error messages normally also contain the command, so they are also removed.
-  grep -v -e "$cmd" "$temp" > "$out"
+  grep -v -e "\$cmd" "$temp" > "$out"
 }
 
 for restype in catalog client console counter director fileset job jobdefs messages pool profile schedule storage; do
