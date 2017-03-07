@@ -92,7 +92,9 @@ class BareosFdPercona (BareosFdPluginBaseclass):
             self.dumpoptions = ""
             if self.mycnf != "":
                 self.dumpoptions += "--defaults-extra-file=%s " % self.mycnf
-            self.dumpoptions += "--backup --stream=xbstream --extra-lsndir=%s" % self.tempdir
+            self.dumpoptions += "--backup --stream=xbstream"
+
+        self.dumpoptions += " --extra-lsndir=%s" % self.tempdir
 
         if 'extradumpoptions' in self.options:
             self.dumpoptions += " " + self.options['extradumpoptions']
