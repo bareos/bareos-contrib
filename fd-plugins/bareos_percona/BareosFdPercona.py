@@ -28,6 +28,7 @@ from subprocess import *
 from BareosFdPluginBaseclass import *
 import BareosFdWrapper
 import MySQLdb
+import datetime
 import time
 import tempfile
 import shutil
@@ -359,6 +360,20 @@ class BareosFdPercona (BareosFdPluginBaseclass):
             self.max_to_lsn = int(self.rop_data[ROP.jobid]['to_lsn'])
             JobMessage(context, bJobMessageType['M_INFO'],
                        "Got to_lsn %d from restore object of job %d\n" % (self.max_to_lsn, ROP.jobid))
+            try:
+                conn = MySQLdb.connect(read_default_file=self.mycnf)
+                cursor = conn.cursor()
+                cursor.execute("SELECT create_time FROM information_schema.tables WHERE table_schema = 'mysql' AND table_name = 'user'")
+                create_time = cursor.fetchall()[0][0]
+                conn.close()
+            except Exception, e:
+                JobMessage(context, bJobMessageType['M_FATAL'], "Could not get create time for database, Error: %s" % e)
+                return bRCs['bRC_Error']
+            job_time = datetime.datetime.utcfromtimestamp(self.since)
+            if create_time > job_time:
+                JobMessage(context, bJobMessageType['M_FATAL'], "Database was created at %s which is after time of previous backup (%s).  Schedule a new Full backup." % (create_time, job_time))
+                return bRCs['bRC_Error']
+
         return bRCs['bRC_OK']
 
 
