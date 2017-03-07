@@ -13,7 +13,7 @@ The key features of xtrabackup are:
 Incremental backups only work for INNODB tables, when using MYISAM, only full backups can be created.
 
 ## Prerequisites
-You need to have the 'mysql' client program and the xtrabackup tool installed.
+You need to have the MySQLdb Python library and the xtrabackup tool installed.
 More about xtrabackup: https://www.percona.com/software/mysql-database/percona-xtrabackup
 
 You will also need the package *bareos-filedaemon-python-plugin* installed on your client.

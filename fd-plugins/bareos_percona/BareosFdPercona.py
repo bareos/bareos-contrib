@@ -27,6 +27,7 @@ import os
 from subprocess import *
 from BareosFdPluginBaseclass import *
 import BareosFdWrapper
+import MySQLdb
 import time
 import tempfile
 import shutil
@@ -72,7 +73,7 @@ class BareosFdPercona (BareosFdPluginBaseclass):
         # By default, standard mysql-config files will be used, set
         # this option to use extra files
         if 'mycnf' in self.options:
-            self.mycnf = "--defaults-extra-file=%s" % self.options['mycnf']
+            self.mycnf = self.options['mycnf']
         else:
             self.mycnf = ""
 
@@ -87,16 +88,13 @@ class BareosFdPercona (BareosFdPluginBaseclass):
         if 'dumpoptions' in self.options:
             self.dumpoptions = self.options['dumpoptions']
         else:
-            self.dumpoptions = "%s --backup --stream=xbstream --extra-lsndir=%s" % (self.mycnf, self.tempdir)
+            self.dumpoptions = ""
+            if self.mycnf != "":
+                self.dumpoptions += "--defaults-extra-file=%s " % self.mycnf
+            self.dumpoptions += "--backup --stream=xbstream --extra-lsndir=%s" % self.tempdir
 
         if 'extradumpoptions' in self.options:
             self.dumpoptions += " " + self.options['extradumpoptions']
-
-        # We need to call mysql to get the current Log Sequece Number (LSN)
-        if 'mysqlcmd' in self.options:
-            self.mysqlcmd = self.options['mysqlcmd']
-        else:
-            self.mysqlcmd = "mysql %s -r" % self.mycnf
 
         return bRCs['bRC_OK']
 
@@ -162,24 +160,20 @@ class BareosFdPercona (BareosFdPluginBaseclass):
             if self.max_to_lsn == 0:
                 JobMessage(context, bJobMessageType['M_FATAL'], "No LSN received to be used with incremental backup\n")
                 return bRCs['bRC_Error']
-            # Improve: make this nicer and with proper error hanling
             # We check, if the DB was changed at all since last backup
-            get_lsn_command = ("echo 'SHOW ENGINE INNODB STATUS' | %s | grep 'Log sequence number' | cut -d ' ' -f 4"
-                               % self.mysqlcmd)
-            last_lsn_proc = Popen(get_lsn_command, shell=True, stdout=PIPE, stderr=PIPE)
-            last_lsn_proc.wait()
-            returnCode = last_lsn_proc.poll()
-            (mysqlStdOut, mysqlStdErr) = last_lsn_proc.communicate()
-            if returnCode != 0 or mysqlStdErr:
-                JobMessage(context, bJobMessageType['M_FATAL'], "Could not get LSN with command \"%s\", Error: %s" 
-                    % (get_lsn_command, mysqlStdErr))
+            try:
+                conn = MySQLdb.connect(read_default_file=self.mycnf)
+                cursor = conn.cursor()
+                cursor.execute('SHOW ENGINE INNODB STATUS')
+                info = cursor.fetchall()[0][2]
+                conn.close()
+                for line in info.split("\n"):
+                    if line.startswith('Log sequence number'):
+                        last_lsn = line.split(' ')[3]
+            except Exception, e:
+                JobMessage(context, bJobMessageType['M_FATAL'], "Could not get LSN, Error: %s" % e)
                 return bRCs['bRC_Error']
-            else:
-                try:
-                    last_lsn = int(mysqlStdOut)
-                except:
-                    JobMessage(context, bJobMessageType['M_FATAL'], "Error reading LSN: \"%s\" not an integer" %mysqlStdOut)
-                    return bRCs['bRC_Error']
+            bareosfd.DebugMessage(context, 100, "Current LSN value is %d\n" % last_lsn)
             if self.max_to_lsn > 0 and self.max_to_lsn >= last_lsn and self.strictIncremental:
                 bareosfd.DebugMessage(
                     context, 100,
