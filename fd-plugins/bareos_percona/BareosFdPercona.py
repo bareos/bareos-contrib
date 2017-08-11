@@ -333,8 +333,6 @@ class BareosFdPercona (BareosFdPluginBaseclass):
                 DebugMessage(context, 100, "end_backup_file() entry point in Python called. Returncode: %d\n"
                              % self.stream.returncode)
                 if returnCode != 0:
-                    if stdError is None:
-                        stdError = ''
                     JobMessage(context, bJobMessageType['M_FATAL'],
                                "Dump command returned non-zero value: %d, command: \"%s\"\n"
                                % (returnCode, self.dumpcommand))
