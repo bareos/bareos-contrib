@@ -27,6 +27,8 @@ import os
 from subprocess import *
 from BareosFdPluginBaseclass import *
 import BareosFdWrapper
+import MySQLdb
+import datetime
 import time
 import tempfile
 import shutil
@@ -46,10 +48,9 @@ class BareosFdPercona (BareosFdPluginBaseclass):
         # the lsn file as restore-object
         self.files_to_backup = ['lsnfile', 'stream']
         self.tempdir = tempfile.mkdtemp()
+        self.log = 'plugin-percona.log'
         self.rop_data = {}
         self.max_to_lsn = 0
-        self.subprocess_stdOut = ''
-        self.subprocess_stdError = ''
 
     def parse_plugin_definition(self, context, plugindef):
         '''
@@ -69,10 +70,21 @@ class BareosFdPercona (BareosFdPluginBaseclass):
         else:
             self.restorecommand = self.options['restorecommand']
 
+        if not 'log' in self.options:
+            self.log = os.path.join(GetValue(context, bVariable['bVarWorkingDir']), self.log)
+        elif self.options['log'] == 'false':
+            self.log = False
+        elif os.path(isabs(self.options['log'])):
+            self.log = self.options['log']
+        else:
+            self.log = os.path.join(GetValue(context, bVariable['bVarWorkingDir']), self.options['log'])
+
         # By default, standard mysql-config files will be used, set
         # this option to use extra files
+        self.connect_options = { 'read_default_group': 'client' }
         if 'mycnf' in self.options:
-            self.mycnf = "--defaults-extra-file=%s" % self.options['mycnf']
+            self.mycnf = self.options['mycnf']
+            self.connect_options['read_default_file'] = self.mycnf
         else:
             self.mycnf = ""
 
@@ -83,17 +95,19 @@ class BareosFdPercona (BareosFdPluginBaseclass):
         else:
             self.strictIncremental = False
 
-        # if dumpotions is set, we use that completely here, otherwise defaults
+        # if dumpoptions is set, we use that completely here, otherwise defaults
         if 'dumpoptions' in self.options:
             self.dumpoptions = self.options['dumpoptions']
         else:
-            self.dumpoptions = "%s --backup --datadir=/var/lib/mysql/ --stream=xbstream --extra-lsndir=%s " % (self.mycnf, self.tempdir)
+            self.dumpoptions = ""
+            if self.mycnf != "":
+                self.dumpoptions += "--defaults-extra-file=%s " % self.mycnf
+            self.dumpoptions += "--backup --stream=xbstream"
 
-        # We need to call mysql to get the current Log Sequece Number (LSN)
-        if 'mysqlcmd' in self.options:
-            self.mysqlcmd = self.options['mysqlcmd']
-        else:
-            self.mysqlcmd = "mysql %s -r" % self.mycnf
+        self.dumpoptions += " --extra-lsndir=%s" % self.tempdir
+
+        if 'extradumpoptions' in self.options:
+            self.dumpoptions += " " + self.options['extradumpoptions']
 
         return bRCs['bRC_OK']
 
@@ -159,24 +173,24 @@ class BareosFdPercona (BareosFdPluginBaseclass):
             if self.max_to_lsn == 0:
                 JobMessage(context, bJobMessageType['M_FATAL'], "No LSN received to be used with incremental backup\n")
                 return bRCs['bRC_Error']
-            # Improve: make this nicer and with proper error hanling
             # We check, if the DB was changed at all since last backup
-            get_lsn_command = ("echo 'SHOW ENGINE INNODB STATUS' | %s | grep 'Log sequence number' | cut -d ' ' -f 4"
-                               % self.mysqlcmd)
-            last_lsn_proc = Popen(get_lsn_command, shell=True, stdout=PIPE, stderr=PIPE)
-            last_lsn_proc.wait()
-            returnCode = last_lsn_proc.poll()
-            (mysqlStdOut, mysqlStdErr) = last_lsn_proc.communicate()
-            if returnCode != 0 or mysqlStdErr:
-                JobMessage(context, bJobMessageType['M_FATAL'], "Could not get LSN with command \"%s\", Error: %s" 
-                    % (get_lsn_command, mysqlStdErr))
-                return bRCs['bRC_Error']
-            else:
-                try:
-                    last_lsn = int(mysqlStdOut)
-                except:
-                    JobMessage(context, bJobMessageType['M_FATAL'], "Error reading LSN: \"%s\" not an integer" %mysqlStdOut)
+            try:
+                conn = MySQLdb.connect(**self.connect_options)
+                cursor = conn.cursor()
+                cursor.execute('SHOW ENGINE INNODB STATUS')
+                result = cursor.fetchall()
+                if len(result) == 0:
+                    JobMessage(context, bJobMessageType['M_FATAL'], "Could not fetch SHOW ENGINE INNODB STATUS, unpriveleged user?")
                     return bRCs['bRC_Error']
+                info = result[0][2]
+                conn.close()
+                for line in info.split("\n"):
+                    if line.startswith('Log sequence number'):
+                        last_lsn = int(line.split(' ')[3])
+            except Exception, e:
+                JobMessage(context, bJobMessageType['M_FATAL'], "Could not get LSN, Error: %s" % e)
+                return bRCs['bRC_Error']
+            bareosfd.DebugMessage(context, 100, "Current LSN value is %d\n" % last_lsn)
             if self.max_to_lsn > 0 and self.max_to_lsn >= last_lsn and self.strictIncremental:
                 bareosfd.DebugMessage(
                     context, 100,
@@ -205,7 +219,7 @@ class BareosFdPercona (BareosFdPluginBaseclass):
             savepkt.fname = "/_percona/xbstream.%010d" % self.jobId
             savepkt.type = bFileType['FT_REG']
             if self.max_to_lsn > 0:
-                self.dumpoptions += "--incremental-lsn=%d" % self.max_to_lsn
+                self.dumpoptions += " --incremental-lsn=%d" % self.max_to_lsn
             self.dumpcommand = ("%s %s" % (self.dumpbinary, self.dumpoptions))
             DebugMessage(context, 100, "Dumper: '" + self.dumpcommand + "'\n")
         elif self.file_to_backup == 'lsnfile':
@@ -250,10 +264,17 @@ class BareosFdPercona (BareosFdPluginBaseclass):
 
         if IOP.func == bIOPS['IO_OPEN']:
             DebugMessage(context, 100, "plugin_io called with IO_OPEN\n")
+            err_fd = None
+            if self.log:
+                try:
+                    err_fd = open(self.log, "w")
+                except IOError, msg:
+                    DebugMessage(context, 100, "Could not open log file (%s): %s\n"
+                                 % (self.log, format(str(msg))))
             if IOP.flags & (os.O_CREAT | os.O_WRONLY):
-                self.stream = Popen(self.restorecommand, shell=True, stdin=PIPE, stderr=None)
+                self.stream = Popen(self.restorecommand, shell=True, stdin=PIPE, stderr=err_fd)
             else:
-                self.stream = Popen(self.dumpcommand, shell=True, stdout=PIPE, stderr=None)
+                self.stream = Popen(self.dumpcommand, shell=True, stdout=PIPE, stderr=err_fd)
             return bRCs['bRC_OK']
 
         elif IOP.func == bIOPS['IO_READ']:
@@ -278,7 +299,7 @@ class BareosFdPercona (BareosFdPluginBaseclass):
             if self.subprocess_returnCode is None:
                 # Subprocess is open, we wait until it finishes and get results
                 try:
-                    (self.subprocess_stdOut, self.subprocess_stdError) = self.stream.communicate()
+                    self.stream.communicate()
                     self.subprocess_returnCode = self.stream.poll()
                 except:
                     JobMessage(context, bJobMessageType['M_ERROR'],
@@ -304,7 +325,6 @@ class BareosFdPercona (BareosFdPluginBaseclass):
         # Usually the xtrabackup process should have terminated here, but on some servers
         # it has not always.
         if self.file_to_backup == 'stream':
-            (stdOut, stdError) = (self.subprocess_stdOut, self.subprocess_stdError)
             returnCode = self.subprocess_returnCode
             if returnCode is None:
                 JobMessage(context, bJobMessageType['M_ERROR'], "Dump command not finished properly for unknown reason\n")
@@ -313,10 +333,9 @@ class BareosFdPercona (BareosFdPluginBaseclass):
                 DebugMessage(context, 100, "end_backup_file() entry point in Python called. Returncode: %d\n"
                              % self.stream.returncode)
                 if returnCode != 0:
-                    if stdError is None:
-                        stdError = ''
                     JobMessage(context, bJobMessageType['M_FATAL'],
-                               "Dump command returned non-zero value: %d, command: \"%s\" message: %s\n" % (returnCode, self.dumpcommand, stdError))
+                               "Dump command returned non-zero value: %d, command: \"%s\"\n"
+                               % (returnCode, self.dumpcommand))
 
             if returnCode != 0:
                 return bRCs['bRC_Error']
@@ -330,7 +349,6 @@ class BareosFdPercona (BareosFdPluginBaseclass):
         '''
         Check, if writing to restore command was succesfull.
         '''
-        (stdOut, stdError) = (self.subprocess_stdOut, self.subprocess_stdError)
         returnCode = self.subprocess_returnCode
         if returnCode is None:
             JobMessage(context, bJobMessageType['M_ERROR'], "Restore command not finished properly for unknown reason\n")
@@ -340,11 +358,9 @@ class BareosFdPercona (BareosFdPluginBaseclass):
                          "end_restore_file() entry point in Python called. Returncode: %d\n"
                          % self.stream.returncode)
             if returnCode != 0:
-                if stdError is None:
-                    stdError = ''
                 JobMessage(context, bJobMessageType['M_ERROR'],
-                           "Restore command returned non-zero value: %d, message: %s\n"
-                           % (returnCode, stdError))
+                           "Restore command returned non-zero value: %d\n"
+                           % returnCode)
 
         if returnCode == 0:
             return bRCs['bRC_OK']
@@ -362,6 +378,20 @@ class BareosFdPercona (BareosFdPluginBaseclass):
             self.max_to_lsn = int(self.rop_data[ROP.jobid]['to_lsn'])
             JobMessage(context, bJobMessageType['M_INFO'],
                        "Got to_lsn %d from restore object of job %d\n" % (self.max_to_lsn, ROP.jobid))
+            try:
+                conn = MySQLdb.connect(**self.connect_options)
+                cursor = conn.cursor()
+                cursor.execute("SELECT create_time FROM information_schema.tables WHERE table_schema = 'mysql' AND table_name = 'user'")
+                create_time = cursor.fetchall()[0][0]
+                conn.close()
+            except Exception, e:
+                JobMessage(context, bJobMessageType['M_FATAL'], "Could not get create time for database, Error: %s" % e)
+                return bRCs['bRC_Error']
+            job_time = datetime.datetime.utcfromtimestamp(self.since)
+            if create_time > job_time:
+                JobMessage(context, bJobMessageType['M_FATAL'], "Database was created at %s which is after time of previous backup (%s).  Schedule a new Full backup." % (create_time, job_time))
+                return bRCs['bRC_Error']
+
         return bRCs['bRC_OK']
 
 
