@@ -28,6 +28,7 @@ from subprocess import *
 from BareosFdPluginBaseclass import *
 import BareosFdWrapper
 import time
+import datetime
 import tempfile
 import shutil
 import json
@@ -50,6 +51,13 @@ class BareosFdPercona (BareosFdPluginBaseclass):
         self.max_to_lsn = 0
         self.subprocess_stdOut = ''
         self.subprocess_stdError = ''
+        self.MySQLdb = False
+        try:
+            import MySQLdb
+            self.MySQLdb = MySQLdb
+            bareosfd.DebugMessage(context, 100, "Imported module MySQLdb\n")
+        except ImportError:
+            bareosfd.DebugMessage(context, 100, "Import of module MySQLdb failed. Using command pipe instead\n")
 
     def parse_plugin_definition(self, context, plugindef):
         '''
@@ -168,18 +176,9 @@ class BareosFdPercona (BareosFdPluginBaseclass):
             if self.max_to_lsn == 0:
                 JobMessage(context, bJobMessageType['M_FATAL'], "No LSN received to be used with incremental backup\n")
                 return bRCs['bRC_Error']
-            # Try to load MySQLdb module
-            hasMySQLdbModule = False
-            try:
-                import MySQLdb
-                hasMySQLdbModule = True
-                bareosfd.DebugMessage(context, 100, "Imported module MySQLdb\n")
-            except ImportError:
-                bareosfd.DebugMessage(context, 100, "Import of module MySQLdb failed. Using command pipe instead\n")
-            # contributed by https://github.com/kjetilho
-            if hasMySQLdbModule:
+            if self.MySQLdb:
                 try:
-                    conn = MySQLdb.connect(**self.connect_options)
+                    conn = self.MySQLdb.connect(**self.connect_options)
                     cursor = conn.cursor()
                     cursor.execute('SHOW ENGINE INNODB STATUS')
                     result = cursor.fetchall()
@@ -398,6 +397,26 @@ class BareosFdPercona (BareosFdPluginBaseclass):
             self.max_to_lsn = int(self.rop_data[ROP.jobid]['to_lsn'])
             JobMessage(context, bJobMessageType['M_INFO'],
                        "Got to_lsn %d from restore object of job %d\n" % (self.max_to_lsn, ROP.jobid))
+            if self.MySQLdb:
+                try:
+                    conn = self.MySQLdb.connect(**self.connect_options)
+                    cursor = conn.cursor()
+                    # In theory, mysql.user can have been dropped and recreated without affecting other tables,
+                    # so this is not perfect.  It will discover a full wipe + reinit, though.
+                    cursor.execute("SELECT create_time FROM information_schema.tables WHERE table_schema = 'mysql' AND table_name = 'user'")
+                    create_time = cursor.fetchall()[0][0]
+                    conn.close()
+                except Exception, e:
+                    JobMessage(context, bJobMessageType['M_FATAL'], "Could not get create time for database, Error: %s" % e)
+                    return bRCs['bRC_Error']
+                job_time = datetime.datetime.utcfromtimestamp(self.since)
+                if create_time > job_time:
+                    # It would be best to upgrade job, but it is not possible.  Fail rather than store useless data.
+                    JobMessage(context, bJobMessageType['M_FATAL'],
+                               "Database was created at %s which is after time of previous backup (%s).  Schedule a new Full backup."
+                               % (create_time, job_time))
+                    return bRCs['bRC_Error']
+
         return bRCs['bRC_OK']
 
 
