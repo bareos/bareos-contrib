@@ -401,9 +401,8 @@ class BareosFdPercona (BareosFdPluginBaseclass):
                 try:
                     conn = self.MySQLdb.connect(**self.connect_options)
                     cursor = conn.cursor()
-                    # In theory, mysql.user can have been dropped and recreated without affecting other tables,
-                    # so this is not perfect.  It will discover a full wipe + reinit, though.
-                    cursor.execute("SELECT create_time FROM information_schema.tables WHERE table_schema = 'mysql' AND table_name = 'user'")
+                    # Look for age of oldest table as a canary for full wipe + reinit
+                    cursor.execute("SELECT MIN(create_time) FROM information_schema.tables")
                     create_time = cursor.fetchall()[0][0]
                     conn.close()
                 except Exception, e:
