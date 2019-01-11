@@ -190,13 +190,13 @@ class BareosFdPercona (BareosFdPluginBaseclass):
                     conn.close()
                     for line in info.split("\n"):
                         if line.startswith('Log sequence number'):
-                            last_lsn = int(line.split(' ')[3])
+                            last_lsn = int(line.split(' ')[-1])
                 except Exception, e:
                     JobMessage(context, bJobMessageType['M_FATAL'], "Could not get LSN, Error: %s" % e)
                     return bRCs['bRC_Error']
             # use old method as fallback, if module MySQLdb not available
             else:
-                get_lsn_command = ("echo 'SHOW ENGINE INNODB STATUS' | %s | grep 'Log sequence number' | cut -d ' ' -f 4"
+                get_lsn_command = ("echo 'SHOW ENGINE INNODB STATUS' | %s | grep 'Log sequence number' | awk '{print $NF}'"
                                    % self.mysqlcmd)
                 last_lsn_proc = Popen(get_lsn_command, shell=True, stdout=PIPE, stderr=PIPE)
                 last_lsn_proc.wait()
