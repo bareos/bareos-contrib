@@ -4,16 +4,17 @@
 Bareos can encrypt your data before sending it to the Storage Daemon but the filenames still
 remain as cleartext in the catalog (the sql database maintained by the Bareos director).
 
-If your filenames contain sensible data (e.g. Patients' names) you may hesitate to backup your data,
+If your filenames contain sensible data (e.g. patients' names) you may hesitate to backup your data,
 because sensible data goes into the database of the SQL server. If this is maintained by some
-external providers, some users may consider this is unsafe.
+external providers, some users may require encryption here for compliance reasons.
 
-This plugins encrypts filenames, directory names and even link sources and destination.
-NOTE: you have to enable data-encryption itself. See https://docs.bareos.org/TasksAndConcepts/DataEncryption.html for more details
+This plugin encrypts filenames, directory names and even link sources and destination.
+
+**NOTE**: you have to enable data-encryption itself to have the file contents encrypted. See https://docs.bareos.org/TasksAndConcepts/DataEncryption.html for more details
 
 ## Requirements
-Needs the Python module cryptography installe in your Python2 environment.
-It will also need latest *BareosFdPluginBaseclass.py* and *BareosFdPluginLocalFileset.py*, currently in https://github.com/bareos/bareos/tree/dev/maik/master/pluginBaseClassLocalFileset
+Needs the Python module *cryptography* installed in your Python2 environment.
+It will also need the latest *BareosFdPluginBaseclass.py* and *BareosFdPluginLocalFileset.py*, currently in https://github.com/bareos/bareos/tree/dev/maik/master/pluginBaseClassLocalFileset
 
 
 ## Configuration
