@@ -1,12 +1,12 @@
-bareos-contrib
-==============
+This repository has been merged into https://github.com/bareos/bareos
 
-External contributions of unsupported code and scripts
+The Bareos project has decided to merge its sub projects into the main repository.
 
-Contributions and LICENSE
+  * https://github.com/bareos/bareos-contrib (master) =>
+    https://github.com/bareos/bareos/tree/master/contrib/
 
-If you want to contribute: please fork this repository, add your stuff and send format patches or pull requests.
+This makes it easier to keep the code in sync for the Bareos releases.
 
-All stuff in this repository is open source and licensed AGPL v3.
-
-Anyone contributing to this repository fully accepts AGPLv3 and confirms that he/she has the right to publish his/her software under the AGPLv3 license.
+We only merged the master branch. So this and all future branches from
+bareos-21 onwards can be found there. 
+The old branch bareos-19.2 will be kept in the old repositories.
